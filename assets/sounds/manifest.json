@@ -1,0 +1,60 @@
+{
+  "sounds": [
+    {
+      "id": "item_monster_heartbeat",
+      "caption": "[HEARTBEAT]",
+      "behavior": "heartbeat",
+      "clipUrl": "/sounds/heartbeat_slow_0.wav",
+      "ownerProp": "prop_monster"
+    },
+    {
+      "id": "item_player_footsteps",
+      "caption": "[FOOTSTEPS]",
+      "behavior": "footsteps",
+      "clipUrl": null,
+      "ownerProp": "prop_player_feet"
+    },
+    {
+      "id": "item_guard_scream",
+      "caption": "[SCREAM]",
+      "behavior": "scream",
+      "clipUrl": null,
+      "ownerProp": "prop_guard"
+    },
+    {
+      "id": "item_coffin_snore",
+      "caption": "[SNORE]",
+      "behavior": "snore",
+      "clipUrl": null,
+      "ownerProp": "prop_coffin"
+    },
+    {
+      "id": "room_ambience",
+      "caption": "[ABANDONED PASSAGES]",
+      "behavior": "ambience",
+      "clipUrl": "/sounds/abandoned_passages.ogg",
+      "ownerProp": "room"
+    },
+    {
+      "id": "sfx_elevator_door",
+      "caption": "[OLD ELEVATOR DOOR]",
+      "behavior": "elevator-door",
+      "clipUrl": "/sounds/old_elevator_door.mp3",
+      "ownerProp": "room"
+    },
+    {
+      "id": "sfx_horror_breathing",
+      "caption": "[HORROR BREATHING]",
+      "behavior": "breathing",
+      "clipUrl": "/sounds/horror_breathing.wav",
+      "ownerProp": "room"
+    },
+    {
+      "id": "sfx_door_creak",
+      "caption": "[DOOR CREAK]",
+      "behavior": "door-creak",
+      "clipUrl": "/sounds/creaky_door_hinge.wav",
+      "ownerProp": "room"
+    }
+  ]
+}

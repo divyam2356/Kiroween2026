@@ -1,0 +1,10 @@
+{
+  "props": [
+    { "id": "prop_monster", "label": "Charging Monster", "geometry": "monster", "color": "#720e1c" },
+    { "id": "prop_lift", "label": "Dead Lift", "geometry": "lift", "color": "#343238" },
+    { "id": "prop_player_feet", "label": "Your Feet", "geometry": "feet", "color": "#6c6872" },
+    { "id": "prop_coffin", "label": "Coffin", "geometry": "coffin", "color": "#2a252d" },
+    { "id": "prop_guard", "label": "The Guard", "geometry": "guard", "color": "#263b47" },
+    { "id": "prop_vault", "label": "Sound Vault", "geometry": "vault", "color": "#48404b" }
+  ]
+}

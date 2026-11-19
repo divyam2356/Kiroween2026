@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#080708" />
+    <meta name="description" content="Foley of the Dead: a caption-first horror puzzle where every sound exists once." />
+    <title>Foley of the Dead</title>
+  </head>
+  <body>
+    <main id="app" aria-label="Foley of the Dead">
+      <canvas id="game-canvas" aria-label="3D game view"></canvas>
+      <div id="tool-overlay" class="tool-overlay" aria-hidden="true">
+        <div class="viewfinder"><span></span><span></span><span></span><span></span></div>
+        <div class="rec-dot">● REC</div>
+      </div>
+      <div id="fade" class="fade" aria-hidden="true"></div>
+
+      <div id="hud">
+        <header class="topbar">
+          <div>
+            <h1>FOLEY <span>OF THE DEAD</span></h1>
+            <div id="location" class="location">GROUND FLOOR · FOYER</div>
+          </div>
+          <div class="topbar-actions">
+            <button id="mute-toggle" class="icon-button" type="button" aria-pressed="true">SOUND: ON</button>
+          </div>
+        </header>
+
+        <div id="goal" class="goal" hidden aria-live="polite"></div>
+        <div id="caption" class="caption" aria-live="polite"></div>
+        <div id="crosshair" class="crosshair" aria-hidden="true"><span></span></div>
+        <div id="target-prompt" class="target-prompt" aria-live="polite"></div>
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+        <ul id="heard" class="heard" aria-label="Sounds you can hear" aria-live="polite"></ul>
+        <div id="emf" class="emf" hidden><span class="emf-label">EMF</span><div class="emf-bars"></div></div>
+        <div id="belt" class="belt" aria-label="Devices"></div>
+        <div id="resume" class="resume" hidden>CLICK TO RETURN TO THE HOUSE</div>
+
+        <section id="journal" class="journal" hidden aria-labelledby="journal-title">
+          <h2 id="journal-title">What the house has told you</h2>
+          <ol id="journal-list"></ol>
+          <p class="controls">J or TAB to close</p>
+        </section>
+
+        <section id="start-card" class="modal-card visible" aria-labelledby="start-title">
+          <p class="eyebrow">A CAPTION-FIRST HORROR PUZZLE</p>
+          <h2 id="start-title">Every sound exists once.</h2>
+          <p>The house locked the door behind you. Its lift is the only way up, and it is waiting for something from the dead. Search all three floors. Find the devices the last owner hid. Steal sounds, touches, and heartbeats from the things that live here, and give them to what needs them more.</p>
+          <p>Nothing here will chase you. Some things will watch.</p>
+          <button id="start-button" class="primary-button" type="button">ENTER THE HOUSE</button>
+          <p class="controls"><kbd>W A S D</kbd> move <kbd>SHIFT</kbd> run <kbd>MOUSE</kbd> look <kbd>E</kbd> use <kbd>1–5</kbd> / <kbd>Q</kbd> / <kbd>WHEEL</kbd> devices <kbd>F</kbd> flashlight <kbd>J</kbd> journal <kbd>Z</kbd> undo <kbd>R</kbd> restart</p>
+        </section>
+
+        <section id="end-card" class="modal-card" aria-labelledby="end-title" hidden>
+          <p class="eyebrow">YOU GOT OUT</p>
+          <h2 id="end-title">The house goes quiet.</h2>
+          <p id="end-copy"></p>
+          <button id="again-button" class="primary-button" type="button">PLAY AGAIN</button>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
