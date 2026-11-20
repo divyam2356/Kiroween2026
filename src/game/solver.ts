@@ -1,33 +1,29 @@
-import { apply, canTravel, isPropVisible, lookupForRoom } from './core';
+import { apply, checkAll, isLiftProp, isPropVisible, lookupForRoom, routesOf } from './core';
 import type { GameAction, GameState, PropDef, RoomDef } from './types';
 
 /**
- * Breadth-first search over puzzle states. It ignores view-only timing (a haunting that
- * fades in and out) but respects every rule in the data: tools, conditions, one hand,
- * and which floors the player can physically reach.
+ * Breadth-first search over puzzle states. It tracks where the player stands and where the
+ * lift car is, and respects every rule in the data: tools, conditions, one hand, locks, and
+ * which floors the player can physically reach.
  */
-export type SolverStep = GameAction | { type: 'TRAVEL'; propId: string };
+export type SolverStep = GameAction | { type: 'TRAVEL'; propId: string; toFloor: number };
 
 interface Node {
   state: GameState;
-  zone: number;
+  floor: number;
+  car: number;
   path: SolverStep[];
 }
 
-const HOUSE_FLOORS = new Set([0, 1]);
-
-function zoneOf(floor: number): number {
-  return HOUSE_FLOORS.has(floor) ? 0 : floor;
+/** Lift-car props are only reachable when the car is on your floor. Everything else needs you on its floor. */
+function reachable(prop: PropDef, floor: number, car: number): boolean {
+  return prop.floor === -1 ? car === floor : prop.floor === floor;
 }
 
-function reachable(prop: PropDef, zone: number): boolean {
-  return prop.floor === -1 || zoneOf(prop.floor) === zone;
-}
-
-function keyOf(state: GameState, zone: number): string {
+function keyOf(state: GameState, floor: number, car: number): string {
   const items = Object.keys(state.props).sort().map((id) => state.props[id].currentItemId ?? '-').join(',');
   const flags = Object.keys(state.flags).filter((f) => state.flags[f]).sort().join(',');
-  return `${zone}|${state.carriedItemId ?? '-'}|${[...state.tools].sort().join(',')}|${items}|${flags}`;
+  return `${floor}|${car}|${state.carriedItemId ?? '-'}|${[...state.tools].sort().join(',')}|${items}|${flags}`;
 }
 
 function relevantFlags(room: RoomDef): Set<string> {
@@ -43,7 +39,7 @@ function relevantFlags(room: RoomDef): Set<string> {
     visit(prop.visibleWhen as never);
     visit(prop.activeWhen as never);
     visit(prop.inspection?.requires as never);
-    visit(prop.travel?.requires as never);
+    for (const route of routesOf(prop)) visit(route.requires as never);
     for (const rule of Object.values(prop.take ?? {})) visit(rule.requires as never);
   }
   return flags;
@@ -53,25 +49,26 @@ export function solve(room: RoomDef, start: GameState, maxNodes = 200_000): Solv
   const lookup = lookupForRoom(room);
   const usefulFlags = relevantFlags(room);
   const seen = new Set<string>();
-  const queue: Node[] = [{ state: start, zone: 0, path: [] }];
-  seen.add(keyOf(start, 0));
+  // The player starts on the ground floor, with the lift car there too.
+  const queue: Node[] = [{ state: start, floor: 0, car: 0, path: [] }];
+  seen.add(keyOf(start, 0, 0));
 
   for (let head = 0; head < queue.length && head < maxNodes; head += 1) {
-    const { state, zone, path } = queue[head];
+    const { state, floor, car, path } = queue[head];
     if (state.completed) return path;
 
-    const candidates: { step: SolverStep; next: GameState; zone: number }[] = [];
+    const candidates: { step: SolverStep; next: GameState; floor: number; car: number }[] = [];
     const tryAction = (action: GameAction): void => {
       try {
         const next = apply(state, action, room, lookup);
-        if (next !== state) candidates.push({ step: action, next: { ...next, undoStack: [] }, zone });
+        if (next !== state) candidates.push({ step: action, next: { ...next, undoStack: [] }, floor, car });
       } catch {
         // Illegal moves are simply not edges in the graph.
       }
     };
 
     for (const prop of room.props) {
-      if (!reachable(prop, zone) || !isPropVisible(state, prop)) continue;
+      if (!reachable(prop, floor, car) || !isPropVisible(state, prop)) continue;
       const here = state.props[prop.id];
       if (here.currentItemId) {
         for (const toolId of [null, ...state.tools]) tryAction({ type: 'GRAB', itemId: here.currentItemId, fromPropId: prop.id, toolId });
@@ -82,16 +79,24 @@ export function solve(room: RoomDef, start: GameState, maxNodes = 200_000): Solv
       if (prop.inspection && !state.flags[prop.inspection.flag] && usefulFlags.has(prop.inspection.flag)) {
         for (const toolId of [null, ...state.tools]) tryAction({ type: 'INSPECT', propId: prop.id, toolId });
       }
-      if (prop.travel && canTravel(state, prop) && zoneOf(prop.travel.toFloor) !== zone) {
-        candidates.push({ step: { type: 'TRAVEL', propId: prop.id }, next: state, zone: zoneOf(prop.travel.toFloor) });
+      for (const route of routesOf(prop)) {
+        if (route.from !== undefined && route.from !== car) continue;
+        if (route.toFloor === floor) continue;
+        if (!checkAll(state, route.requires)) continue;
+        candidates.push({
+          step: { type: 'TRAVEL', propId: prop.id, toFloor: route.toFloor },
+          next: state,
+          floor: route.toFloor,
+          car: isLiftProp(prop) ? route.toFloor : car,
+        });
       }
     }
 
     for (const candidate of candidates) {
-      const key = keyOf(candidate.next, candidate.zone);
+      const key = keyOf(candidate.next, candidate.floor, candidate.car);
       if (seen.has(key)) continue;
       seen.add(key);
-      queue.push({ state: candidate.next, zone: candidate.zone, path: [...path, candidate.step] });
+      queue.push({ state: candidate.next, floor: candidate.floor, car: candidate.car, path: [...path, candidate.step] });
     }
   }
   return null;

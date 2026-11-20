@@ -133,13 +133,13 @@ export const placements: Record<string, Placement> = {
   corpse_hand: { pos: [8.55, 0.72, 5.4], hit: [0.45, 0.4, 0.45], anchor: [0, 0.12, 0] },
   library_portrait: { pos: [8, 1.85, -9.76], hit: [1.6, 1.6, 0.25], model: { kind: 'prim', name: 'weddingPortrait' } },
   library_books: { pos: [11.55, 0, -5], rotY: -PI / 2, hit: [0.7, 2.2, 2.2], hitOffset: [0, 1.1, 0], model: { kind: 'kaykit', name: 'shelf_B_large_decorated', fit: 2.3, tint: '#7a6656' }, solid: true },
+  master_nightstand: { pos: [11.4, 0, 3.8], rotY: -PI / 2, hit: [0.7, 0.9, 0.6], hitOffset: [0, 0.45, 0], model: { kind: 'prim', name: 'nightstand' }, anchor: [0.12, 0.7, 0], solid: true },
   nursery_crib: { pos: [-8.2, 0, 9.1], hit: [1.4, 1, 0.9], hitOffset: [0, 0.5, 0], model: { kind: 'prim', name: 'crib' }, anchor: [0, 0.55, 0], solid: true },
   nursery_chair: { pos: [-11, 0, 4.2], rotY: PI / 2, hit: [0.9, 1.2, 0.9], hitOffset: [0, 0.6, 0], model: { kind: 'kaykit', name: 'chair_A_wood', fit: 1.15, tint: '#7a6656' } },
   specter: { pos: [-8, 0, 6], hit: [1, 2, 1], hitOffset: [0, 1, 0] },
   bath_tub: { pos: [-10.9, 0, -7.4], hit: [1.1, 0.9, 2.2], hitOffset: [0, 0.45, 0], model: { kind: 'prim', name: 'bathtub' }, solid: true },
   bathroom_mirror: { pos: [-11.76, 0, -2.6], rotY: PI / 2, hit: [1.1, 1.2, 0.3], hitOffset: [0, 1.65, 0], model: { kind: 'prim', name: 'smallMirror' } },
 
-  elevator_attic: { pos: [0, 0, -1.76], hit: [2, 2.6, 0.4], hitOffset: [0, 1.3, 0], model: { kind: 'prim', name: 'elevator' } },
   scarecrow: { pos: [6, 0, 5.5], rotY: -PI / 3, hit: [1.1, 2.1, 1.1], hitOffset: [0, 1.05, 0], model: { kind: 'halloween', name: 'Scarecrow', fit: 2.1 }, anchor: [0, 1.85, 0.25], solid: true },
   hall_coffin: { pos: [-3, 0, -9.0], hit: [0.95, 1.0, 2.1], hitOffset: [0, 0.5, 0], model: { kind: 'halloween', name: 'Coffin', fit: 2.1 }, solid: true },
   washbasin: { pos: [7, 0, -0.35], rotY: PI / 2, hit: [1, 1.1, 1.6], hitOffset: [0, 0.55, 0], model: { kind: 'prim', name: 'sink' }, solid: true },
@@ -193,8 +193,6 @@ export const decor: Decor[] = [
   { floor: 0, pos: [10, 0, 8.3], rotY: PI + 0.5, model: K('armchair', 1.1, '#5a3a40') },
   { floor: 0, pos: [8, 0, 7.2], model: { kind: 'prim', name: 'rug' } },
   { floor: 0, pos: [5, 0, 9.3], model: K('lamp_standing', 1.8) },
-  // UV trail downstairs: from the foyer into the dining room, to the head of the table
-  ...[[1, 5], [2.2, 3.2], [3.4, 1.4], [5.2, 0.6], [6.9, -1.0], [8.7, -2.6]].map(([x, z], i): Decor => ({ floor: 0, pos: [x, 0.02, z], rotY: 0.6 + i * 0.25, model: { kind: 'prim', name: 'handprint' }, revealTool: 'tool_uv' })),
 
   // Upper landing
   { floor: 1, pos: [0, 0, 6], model: { kind: 'prim', name: 'rug' } },
@@ -211,8 +209,7 @@ export const decor: Decor[] = [
   // Master bedroom
   { floor: 1, pos: [9.2, 0, 6], rotY: -PI / 2, model: K('bed_double_A', 2.6, '#7a5a5a'), solid: [2.3, 2.0] },
   { floor: 1, pos: [9.3, 0.62, 6.1], rotY: -PI / 2, model: H('Body001', 1.8, { lieDown: true }) },
-  { floor: 1, pos: [11.4, 0, 3.8], model: K('cabinet_medium', 1.0), solid: [0.6, 0.6] },
-  { floor: 1, pos: [11.4, 1.0, 3.8], model: H('Candle', 0.35) },
+  { floor: 1, pos: [11.4, 0.66, 3.55], model: H('Candle', 0.3) },
   { floor: 1, pos: [5.5, 0, 9.2], model: K('armchair', 1.1, '#5a3a40') },
   // Library
   { floor: 1, pos: [11.55, 0, -8], rotY: -PI / 2, model: K('shelf_B_large_decorated', 2.3), solid: [0.6, 2.0] },
@@ -261,7 +258,7 @@ export const lights: LightDef[] = [
   { floor: 1, pos: [0, 3, -7], color: '#b08878', intensity: 7, distance: 10 },
   { floor: 1, pos: [-8, 2.7, 6], color: '#8fa0d0', intensity: 8, distance: 11 },
   { floor: 1, pos: [-8, 2.7, -4], color: '#8fc0b0', intensity: 8, distance: 11, flicker: 0.1 },
-  { floor: 1, pos: [11.4, 1.5, 3.8], color: '#ffb070', intensity: 9, distance: 11, flicker: 0.12 },
+  { floor: 1, pos: [10.9, 1.3, 3.55], color: '#ffb070', intensity: 5, distance: 10, flicker: 0.12 },
   { floor: 1, pos: [7.5, 2.4, -5], color: '#ffa860', intensity: 9, distance: 11 },
 
   { floor: 2, pos: [-2.5, 1.0, 1.5], color: '#ff9a40', intensity: 7, distance: 8, flicker: 0.25, linkedProp: 'carver' },

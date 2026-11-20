@@ -19,9 +19,9 @@ The Ribbed Hollow stands invisible at the head of the dining table. It only spea
    - **Dining room:** with the recorder, record the **[TICKING]** from the grandfather clock.
    - **Servants' hall** (behind the foyer, through the kitchen or the dining room): graft the ticking into the **coffin**. The house goes silent.
 6. **Dining room:** with the recorder, record the Hollow's **[VOICE OF THE DEAD]**. It collapses.
-7. **Foyer:** graft the voice into the lift's **speaker grille**. *Ground floor cleared.*
+7. **Foyer:** graft the voice into the lift's **speaker grille**. *Ground floor cleared.* From now on the lift can take you to the upper floor: press E on it and pick a floor (1, 2, 3 or click). The stairs still work too.
 
-Optional: the **UV lamp** is on the kitchen counter. You need it upstairs. Under UV, handprints on the ground floor lead from the foyer to the Hollow.
+The fire on the pantry door and the ticking in the coffin are set in place once they are correct. You cannot take them back or undo past them.
 
 ## Upper floor: the TOUCH
 
@@ -33,13 +33,13 @@ Take the stairs up. The veiled woman, Mournveil, now drifts between upstairs roo
 4. **Steam thread, in either order with steps 2–3:**
    - **Bathroom:** record the **[RUNNING WATER]** from the bathtub. The steam starts to clear.
    - **Master bedroom:** graft the water into the dry **washbasin**. (Clue: the diary in the library.)
-5. **Bathroom:** select the UV lamp (2) and examine the **mirror**. A handprint glows on the cold glass.
+5. **Master bedroom:** take the **UV lamp** from the nightstand. **Bathroom:** select the UV lamp (2) and examine the **mirror**. A handprint glows on the cold glass.
 6. Select the photo camera (5) and photograph the mirror: **[HANDPRINT OF THE DEAD]**.
-7. **Back down to the foyer:** graft the photo into the lift's **brass hand**. *Upper floor cleared.*
+7. **At the lift (on either floor):** graft the photo into the lift's **brass hand**. *Upper floor cleared.*
 
 ## Attic: the HEART
 
-Ride the lift up (E on the lift door). The Carver stands with its arms across the round window, and its head follows you. It only looks away toward a voice.
+Ride the lift up: press E on the lift and choose **Attic** (3). The Carver stands with its arms across the round window, and its head follows you. It only looks away toward a voice.
 
 1. Take the **[VOICE OF THE DEAD]** back out of the lift's grille. The lift goes dead, and you are stranded.
 2. Graft the voice into the **scarecrow's** gramophone horn. The Carver turns toward it.

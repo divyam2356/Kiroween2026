@@ -7,12 +7,13 @@ import type {
   ItemDef,
   PropDef,
   PropState,
+  PropTravel,
   RoomDef,
 } from './types';
 
 export const MAX_UNDO_DEPTH = 80;
 
-type ConditionView = Pick<GameSnapshot, 'props' | 'flags' | 'tools'>;
+type View = Pick<GameSnapshot, 'props' | 'flags' | 'tools' | 'carriedItemId'>;
 
 function cloneProps(props: Record<string, PropState>): Record<string, PropState> {
   const next: Record<string, PropState> = {};
@@ -32,7 +33,7 @@ function snapshotOf(state: GameSnapshot): GameSnapshot {
   };
 }
 
-export function checkCondition(view: ConditionView, condition: Condition): boolean {
+export function checkCondition(view: View, condition: Condition): boolean {
   if ('flag' in condition) return view.flags[condition.flag] === true;
   if ('notFlag' in condition) return view.flags[condition.notFlag] !== true;
   if ('has' in condition) return view.props[condition.has[0]]?.currentItemId === condition.has[1];
@@ -40,17 +41,17 @@ export function checkCondition(view: ConditionView, condition: Condition): boole
   return view.tools.includes(condition.tool);
 }
 
-export function checkAll(view: ConditionView, conditions: Condition[] | undefined): boolean {
+export function checkAll(view: View, conditions: Condition[] | undefined): boolean {
   if (!conditions) return true;
   for (const condition of conditions) if (!checkCondition(view, condition)) return false;
   return true;
 }
 
-export function lookupForRoom(room: RoomDef): GameLookup {
+export function lookupForRoom(room: RoomDef) {
   return {
-    items: Object.fromEntries(room.items.map((item) => [item.id, item])),
-    props: Object.fromEntries(room.props.map((prop) => [prop.id, prop])),
-  };
+    items: Object.fromEntries(room.items.map((item) => [item.id, item])) as Record<string, ItemDef>,
+    props: Object.fromEntries(room.props.map((prop) => [prop.id, prop])) as Record<string, PropDef>,
+  } satisfies GameLookup;
 }
 
 export function createInitialState(room: RoomDef): GameState {
@@ -88,6 +89,70 @@ export function createInitialState(room: RoomDef): GameState {
   return state;
 }
 
+/** Dormant props are furniture until the puzzle wakes them. */
+export function isActive(view: View, prop: PropDef): boolean {
+  return checkAll(view, prop.activeWhen);
+}
+
+export function isPropVisible(view: View, prop: PropDef): boolean {
+  return checkAll(view, prop.visibleWhen);
+}
+
+/** A correct placement has locked this prop. Its item cannot be lifted off. */
+export function isLocked(view: View, propId: string): boolean {
+  return view.flags[`lock_${propId}`] === true;
+}
+
+/** The lift car moves with its own routes; stairs do not. */
+export function isLiftProp(prop: PropDef): boolean {
+  return prop.id.startsWith('elevator');
+}
+
+export function routesOf(prop: PropDef): PropTravel[] {
+  return [...(prop.travel ? [prop.travel] : []), ...(prop.routes ?? [])];
+}
+
+/**
+ * The first route that is usable from where the lift car is, and whose conditions hold.
+ * When carFloor is omitted (for example in tests), routes are not filtered by car position.
+ */
+export function routeFor(view: View, prop: PropDef, carFloor?: number): { route: PropTravel | null; reason: string | null } {
+  const candidates = routesOf(prop).filter((r) => r.from === undefined || carFloor === undefined || r.from === carFloor);
+  if (candidates.length === 0) return { route: null, reason: prop.travel?.lockedText ?? 'It will not move from here.' };
+  for (const route of candidates) {
+    if (checkAll(view, route.requires)) return { route, reason: null };
+  }
+  return { route: null, reason: candidates[0].lockedText ?? 'It will not move.' };
+}
+
+/** Every route that leaves from where the lift car is, usable or not, so the player can choose. */
+export function routeOptions(view: View, prop: PropDef, carFloor?: number): { route: PropTravel; usable: boolean; reason: string | null }[] {
+  return routesOf(prop)
+    .filter((r) => r.from === undefined || carFloor === undefined || r.from === carFloor)
+    .map((route) => {
+      const usable = checkAll(view, route.requires);
+      return { route, usable, reason: usable ? null : route.lockedText ?? 'It will not go there.' };
+    });
+}
+export function canTravel(view: View, prop: PropDef, carFloor?: number): boolean {
+  return routeFor(view, prop, carFloor).route !== null;
+}
+
+/** Whether something about this prop is worth highlighting: examinable, holding an item, a free socket, or a usable route. */
+export function isInteractable(view: View, prop: PropDef, carFloor?: number): boolean {
+  if (!isPropVisible(view, prop) || !isActive(view, prop)) return false;
+  if (isLocked(view, prop.id)) return false;
+  if (prop.inspection && !view.flags[prop.inspection.flag]) return true;
+  if (view.props[prop.id]?.currentItemId) return true;
+  if (view.carriedItemId && prop.accepts[view.carriedItemId] && !view.props[prop.id]?.currentItemId) return true;
+  return routeFor(view, prop, carFloor).route !== null;
+}
+
+function dormant(view: View, prop: PropDef | undefined): string | null {
+  if (!prop || isActive(view, prop)) return null;
+  return prop.dormantText ?? 'Nothing happens.';
+}
+
 function requireItem(lookup: GameLookup, itemId: string): ItemDef {
   const item = lookup.items[itemId];
   if (!item) throw new Error(`Unknown item: ${itemId}`);
@@ -109,21 +174,13 @@ function commit(previous: GameState, next: GameSnapshot, room: RoomDef): GameSta
 }
 
 /** Why an action would fail, or null when it is allowed. Used by the HUD to explain locks. */
-export function isActive(view: ConditionView, prop: PropDef): boolean {
-  return checkAll(view, prop.activeWhen);
-}
-
-function dormant(view: ConditionView, prop: PropDef | undefined): string | null {
-  if (!prop || isActive(view, prop)) return null;
-  return prop.dormantText ?? 'Nothing happens.';
-}
-
 export function explainGrab(state: GameSnapshot, propId: string, toolId: string | null, lookup: GameLookup): string | null {
   const prop = lookup.props[propId];
   const propState = state.props[propId];
+  if (!prop || !propState?.currentItemId) return 'There is nothing to take.';
+  if (isLocked(state, propId)) return 'It is set in place. It will not come loose now.';
   const asleep = dormant(state, prop);
   if (asleep) return asleep;
-  if (!prop || !propState?.currentItemId) return 'There is nothing to take.';
   const itemId = propState.currentItemId;
   const item = lookup.items[itemId];
   const rule = prop.take?.[itemId];
@@ -138,9 +195,10 @@ export function explainGrab(state: GameSnapshot, propId: string, toolId: string 
 }
 
 export function explainInspect(state: GameSnapshot, propId: string, toolId: string | null, lookup: GameLookup): string | null {
-  const asleep = dormant(state, lookup.props[propId]);
+  const prop = lookup.props[propId];
+  const asleep = dormant(state, prop);
   if (asleep) return asleep;
-  const inspection = lookup.props[propId]?.inspection;
+  const inspection = prop?.inspection;
   if (!inspection) return 'Nothing more to learn here.';
   if (inspection.tool && toolId !== inspection.tool) return inspection.toolText ?? 'You cannot see anything unusual.';
   if (!checkAll(state, inspection.requires)) return inspection.lockedText ?? 'Nothing happens yet.';
@@ -158,30 +216,27 @@ export function explainDrop(state: GameSnapshot, propId: string, lookup: GameLoo
   return null;
 }
 
-export function canTravel(state: ConditionView, prop: PropDef): boolean {
-  return Boolean(prop.travel) && checkAll(state, prop.travel?.requires);
-}
-
-export function isPropVisible(state: ConditionView, prop: PropDef): boolean {
-  return checkAll(state, prop.visibleWhen);
-}
-
 export function apply(state: GameState, action: GameAction, room: RoomDef, lookup = lookupForRoom(room)): GameState {
   if (state.roomId !== room.id) throw new Error(`State belongs to ${state.roomId}, not ${room.id}`);
 
   if (action.type === 'UNDO') {
     const previous = state.undoStack.at(-1);
     if (!previous) throw new Error('Nothing to undo.');
+    // Rewinding past a placement that was set in place would take it back. Refuse that.
+    for (const key of Object.keys(state.flags)) {
+      if (key.startsWith('lock_') && state.flags[key] && !previous.flags[key]) {
+        throw new Error('That was set in place. It cannot be unwound.');
+      }
+    }
     return { ...snapshotOf(previous), undoStack: state.undoStack.slice(0, -1) };
   }
 
   const next = snapshotOf(state);
 
   if (action.type === 'INSPECT') {
-    const prop = requireProp(lookup, action.propId);
     const reason = explainInspect(state, action.propId, action.toolId ?? null, lookup);
     if (reason) throw new Error(reason);
-    const inspection = prop.inspection!;
+    const inspection = requireProp(lookup, action.propId).inspection!;
     if (next.flags[inspection.flag]) return state;
     next.flags[inspection.flag] = true;
     return commit(state, next, room);
@@ -207,6 +262,7 @@ export function apply(state: GameState, action: GameAction, room: RoomDef, looku
   if (reason) throw new Error(reason);
   const response = prop.accepts[action.itemId];
   if (response.setFlag) next.flags[response.setFlag] = true;
+  if (response.locks) next.flags[`lock_${action.toPropId}`] = true;
   next.props[action.toPropId] = { ...next.props[action.toPropId], currentItemId: action.itemId, status: response.status };
   next.carriedItemId = null;
   return commit(state, next, room);

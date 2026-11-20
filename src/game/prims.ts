@@ -362,6 +362,22 @@ function chalkRing(): PrimParts {
   return { root };
 }
 
+/** A bedside table. Its top is at 0.66 m, so things placed on it should sit at that height. */
+function nightstand(): PrimParts {
+  const root = new THREE.Group();
+  const body = wood('#6a4a3a');
+  const dark = wood('#3a2620');
+  root.add(box(0.58, 0.62, 0.46, body, 0, 0.31, 0));
+  root.add(box(0.64, 0.04, 0.52, dark, 0, 0.64, 0));
+  root.add(box(0.5, 0.2, 0.02, dark, 0, 0.45, 0.235));
+  root.add(box(0.07, 0.03, 0.03, mat('#b08a4a', { metalness: 0.8, roughness: 0.4 }), 0, 0.45, 0.255));
+  // A faint violet leak from the drawer seam hints at the lamp inside.
+  const leak = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.012), new THREE.MeshBasicMaterial({ color: '#9a60ff' }));
+  leak.position.set(0, 0.345, 0.232);
+  root.add(leak);
+  return { root };
+}
+
 export function buildPrim(name: string): PrimParts {
   switch (name) {
     case 'frontDoor': return frontDoor();
@@ -382,6 +398,7 @@ export function buildPrim(name: string): PrimParts {
     case 'watch': return watch();
     case 'weddingPortrait': return weddingPortrait();
     case 'crib': return crib();
+    case 'nightstand': return nightstand();
     case 'bathtub': return bathtub();
     case 'handprint': return floorHandprint();
     case 'window': return windowPrim(false);

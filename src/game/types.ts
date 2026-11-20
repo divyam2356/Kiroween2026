@@ -14,7 +14,7 @@ export interface ItemDef {
 
 /**
  * Conditions are evaluated against item placement and flags. They let room data
- * express "the clock is silent" or "the Hollow still has its heart" without one-off code.
+ * express "the clock is silent" or "the Hollow still has its voice" without one-off code.
  */
 export type Condition =
   | { flag: string }
@@ -29,6 +29,8 @@ export interface PropResponse {
   status: PropStatus;
   note: string;
   setFlag?: string;
+  /** A correct placement. The item is set in place: it cannot be taken back, and undo cannot unwind it. */
+  locks?: boolean;
 }
 
 export interface PropInspection {
@@ -53,13 +55,17 @@ export interface PropTake {
 }
 
 export interface PropTravel {
-  /** Floor and landing point are view data, but whether travel is allowed is a puzzle rule. */
+  /** Floor the lift or stairs deliver you to. */
   toFloor: number;
   to: [number, number, number];
   yaw: number;
   requires?: Condition[];
   lockedText?: string;
   text: string;
+  /** Only usable when the lift car is on this floor. Omit for stairs, which are always available. */
+  from?: number;
+  /** Short action label shown in the HUD, for example "RIDE TO THE UPPER FLOOR". */
+  label?: string;
 }
 
 export interface PropDef {
@@ -73,6 +79,8 @@ export interface PropDef {
   take?: Record<string, PropTake>;
   inspection?: PropInspection;
   travel?: PropTravel;
+  /** Extra travel options, for example the lift serving more than one floor. */
+  routes?: PropTravel[];
   /** View rule: the prop can only be seen and targeted when these hold. */
   visibleWhen?: Condition[];
   /** Puzzle rule: until these hold the prop is dormant. Nothing can be taken, examined, or grafted. */

@@ -1,10 +1,15 @@
+import '@fontsource/im-fell-english/400.css';
+import '@fontsource/im-fell-english/400-italic.css';
+import '@fontsource/barlow-semi-condensed/400.css';
+import '@fontsource/barlow-semi-condensed/500.css';
+import '@fontsource/barlow-semi-condensed/600.css';
 import './style.css';
-import { apply, canTravel, createInitialState, explainDrop, explainGrab, explainInspect, getItemCaption, isActive, lookupForRoom } from './game/core';
+import { apply, createInitialState, explainDrop, explainGrab, explainInspect, getItemCaption, isActive, isLiftProp, lookupForRoom, routeFor, routeOptions, routesOf } from './game/core';
 import { AudioManager } from './game/audio';
 import { GameRenderer } from './game/render';
 import { house } from './game/rooms';
 import { FLOOR_NAMES, START, soundSources } from './scenes/houseLayout';
-import type { GameAction, GameState, PropDef } from './game/types';
+import type { GameAction, GameState, PropDef, PropTravel } from './game/types';
 
 function el<T extends Element = HTMLElement>(selector: string): T {
   const element = document.querySelector<T>(selector);
@@ -15,7 +20,12 @@ function el<T extends Element = HTMLElement>(selector: string): T {
 const app = el('#app');
 const canvas = el<HTMLCanvasElement>('#game-canvas');
 const ui = {
-  location: el('#location'),
+  floorName: el('#floor-name'),
+  roomName: el('#room-name'),
+  hand: el('#hand'),
+  toolName: el('#tool-name'),
+  liftMenu: el('#lift-menu'),
+  liftOptions: el('#lift-options'),
   goal: el('#goal'),
   caption: el('#caption'),
   crosshair: el('#crosshair'),
@@ -41,7 +51,21 @@ const ui = {
 const room = house;
 const lookup = lookupForRoom(room);
 const TOOL_SLOTS = ['tool_recorder', 'tool_uv', 'tool_emf', 'tool_thermal', 'tool_camera'];
-const TOOL_VERBS: Record<string, string> = { tool_recorder: 'RECORD', tool_camera: 'PHOTOGRAPH' };
+/** Sound played when an item is placed in a specific prop. Keyed by 'propId:itemId'. */
+const PLACEMENT_SOUNDS: Record<string, { url: string; volume: number }> = {
+  'hall_coffin:ev_ticking': { url: '/sounds/coffin_completion.mp3', volume: 0.8 },
+};
+const TOOL_VERBS: Record<string, string> = { tool_recorder: 'Record', tool_camera: 'Photograph' };
+const svg = (body: string) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+const TOOL_ICONS: Record<string, string> = {
+  tool_recorder: svg('<rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="8.5" cy="12" r="2.2"/><circle cx="15.5" cy="12" r="2.2"/><path d="M8.5 14.2h7"/>'),
+  tool_uv: svg('<path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/>'),
+  tool_emf: svg('<path d="M12 20V10"/><path d="M8.5 6.5a5 5 0 0 1 7 0M6 4a8.5 8.5 0 0 1 12 0"/><circle cx="12" cy="9.5" r="1.2"/><rect x="8" y="16" width="8" height="5" rx="1"/>'),
+  tool_thermal: svg('<path d="M10 14.5V5a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0z"/><path d="M12 9v7"/>'),
+  tool_camera: svg('<path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/>'),
+};
+const UNKNOWN_ICON = svg('<path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14"/><path d="M12 17.5v.01"/>');
+const DIRECTION_ARROWS: Record<string, string> = { ahead: '\u2191', 'behind you': '\u2193', 'to your left': '\u2190', 'to your right': '\u2192', 'right here': '\u25CF', 'from below': '\u2913', 'from above': '\u2912' };
 
 const audio = new AudioManager();
 let state: GameState = createInitialState(room);
@@ -53,6 +77,8 @@ let restartArmedUntil = 0;
 let toastTimer = 0;
 let captionTimer = 0;
 let glimpseUntil = 0;
+let liftProp: PropDef | null = null;
+let liftOpenedAt = 0;
 
 for (let i = 0; i < 8; i += 1) ui.emfBars.appendChild(document.createElement('i'));
 
@@ -65,7 +91,7 @@ const renderer = new GameRenderer(canvas, {
   onJournal: () => toggleJournal(),
   onRestart: () => requestRestart(),
   onTargetChange: () => updatePrompt(),
-  onPointerLockChange: (locked) => { ui.resume.hidden = locked || !playing || traveling; },
+  onPointerLockChange: (locked) => { ui.resume.hidden = locked || !playing || traveling || Boolean(liftProp); },
   onGlimpse: () => {
     glimpseUntil = performance.now() + 4500;
     void audio.playOnce('/sounds/creaky_door_hinge.wav', 0.25);
@@ -90,9 +116,9 @@ function announce(message: string, voice = false, ms = 4200): void {
   captionTimer = window.setTimeout(() => { ui.caption.classList.remove('voice'); updateCarried(); }, ms);
 }
 
+/** What you carry is always shown in the hand panel, so the big caption clears once an announcement ends. */
 function updateCarried(): void {
-  const carried = getItemCaption(state.carriedItemId, lookup);
-  if (!ui.caption.classList.contains('voice')) ui.caption.textContent = carried ? `CARRYING  ${carried}` : '';
+  if (!ui.caption.classList.contains('voice')) ui.caption.textContent = '';
 }
 
 function flash(): void {
@@ -113,14 +139,15 @@ function renderBelt(): void {
     const slot = document.createElement('div');
     const owned = state.tools.includes(toolId);
     slot.className = `slot${owned ? ' owned' : ''}${selectedTool === toolId ? ' selected' : ''}`;
-    const item = lookup.items[toolId];
-    slot.innerHTML = owned ? `<b>${index + 1} · ${item.label.toUpperCase()}</b>${item.blurb}` : `<b>${index + 1} · ???</b>not found`;
+    slot.title = owned ? lookup.items[toolId].label : 'Not found yet';
+    slot.innerHTML = `<span class="num">${index + 1}</span>${owned ? TOOL_ICONS[toolId] : UNKNOWN_ICON}`;
     return slot;
   }));
-  const carry = document.createElement('div');
-  carry.className = `slot${state.carriedItemId ? ' carry owned' : ''}`;
-  carry.innerHTML = `<b>HAND</b>${getItemCaption(state.carriedItemId, lookup) ?? 'empty'}`;
-  ui.belt.appendChild(carry);
+  const tool = selectedTool ? lookup.items[selectedTool] : null;
+  ui.toolName.innerHTML = tool ? `<b>${tool.label}</b>${tool.blurb}` : '';
+  const carried = getItemCaption(state.carriedItemId, lookup);
+  ui.hand.classList.toggle('full', Boolean(carried));
+  ui.hand.innerHTML = `<span class="label">${carried ? 'CARRYING' : 'HAND'}</span><span class="item">${carried ?? 'Empty'}</span>`;
 }
 
 function setTool(toolId: string | null): void {
@@ -154,6 +181,7 @@ function toggleFlashlight(): void {
 // ── Prompt shown for whatever is under the crosshair ─────────────
 
 function updatePrompt(): void {
+  if (liftProp) return;
   const propId = renderer.getTargetPropId();
   ui.crosshair.classList.toggle('active', Boolean(propId));
   if (!propId) { ui.prompt.classList.remove('visible'); return; }
@@ -161,32 +189,45 @@ function updatePrompt(): void {
   const here = state.props[propId];
   const itemId = here?.currentItemId ?? null;
   const item = itemId ? lookup.items[itemId] : null;
-  const label = labelFor(prop).toUpperCase();
+  const label = labelFor(prop);
+  const act = (verb: string, name: string) => `<span class="act"><kbd>E</kbd><span class="verb">${verb}</span><span class="name">${name}</span></span>`;
+  const plain = (name: string) => `<span class="act plain"><span class="name">${name}</span></span>`;
   let line = '';
   let hint = '';
-  if (!isActive(state, prop) && !prop.travel) {
-    ui.prompt.innerHTML = `<small></small>`;
+  let examining = false;
+  if (!isActive(state, prop) && routesOf(prop).length === 0) {
+    ui.prompt.innerHTML = plain(label);
     ui.prompt.classList.add('visible');
     return;
   }
 
   if (state.carriedItemId && !explainDrop(state, propId, lookup)) {
-    line = `<b>E</b>  GRAFT ${getItemCaption(state.carriedItemId, lookup)} INTO ${label}`;
+    line = act('Place', `${getItemCaption(state.carriedItemId, lookup)} in ${label}`);
   } else if (item?.kind === 'tool') {
-    line = explainGrab(state, propId, null, lookup) ? label : `<b>E</b>  TAKE ${item.caption}`;
-    hint = explainGrab(state, propId, null, lookup) ?? item.blurb;
+    const blocked = explainGrab(state, propId, null, lookup);
+    line = blocked ? plain(label) : act('Take', item.label);
+    hint = blocked ?? item.blurb;
   } else if (item && !explainGrab(state, propId, selectedTool, lookup)) {
-    const verb = TOOL_VERBS[prop.take?.[item.id]?.tool ?? ''] ?? 'TAKE';
-    line = `<b>E</b>  ${verb} ${item.caption}`;
+    const verb = TOOL_VERBS[prop.take?.[item.id]?.tool ?? ''] ?? 'Take';
+    line = act(verb, item.caption);
   } else if (prop.inspection && !state.flags[prop.inspection.flag]) {
-    line = `<b>E</b>  EXAMINE ${label}`;
-  } else if (prop.travel && !(prop.inspection && !state.flags[prop.inspection.flag])) {
-    line = `<b>E</b>  ${prop.id.startsWith('stairs') ? 'TAKE THE STAIRS' : 'RIDE THE LIFT'}`;
-    if (!canTravel(state, prop)) hint = prop.travel.lockedText ?? '';
+    line = act('Examine', label);
+    examining = true;
+  } else if (routesOf(prop).length) {
+    const options = routeOptions(state, prop, renderer.getCarFloor());
+    if (options.length > 1) {
+      line = act('Use', label);
+      const open = options.filter((o) => o.usable).length;
+      hint = open ? 'Choose a floor.' : options[0].reason ?? '';
+    } else {
+      const { route, reason } = routeFor(state, prop, renderer.getCarFloor());
+      line = route ? act('Go', (route.label ?? 'Ride').toLowerCase().replace(/^\w/, (c) => c.toUpperCase())) : plain(label);
+      hint = reason ?? '';
+    }
   } else {
-    line = label;
+    line = plain(label);
   }
-  if (!hint && !line.startsWith('<b>E</b>  EXAMINE')) hint = labelFor(prop) === prop.label ? prop.description : '';
+  if (!hint && !examining) hint = labelFor(prop) === prop.label ? prop.description : '';
   ui.prompt.innerHTML = `${line}${hint ? `<small>${hint}</small>` : ''}`;
   ui.prompt.classList.add('visible');
 }
@@ -209,7 +250,7 @@ function interact(): void {
   const here = state.props[propId];
   const itemId = here.currentItemId;
   const inspectionPending = Boolean(prop.inspection && !state.flags[prop.inspection.flag]);
-  if (!isActive(state, prop) && !prop.travel) { showToast(prop.dormantText ?? prop.description); return; }
+  if (!isActive(state, prop) && routesOf(prop).length === 0) { showToast(prop.dormantText ?? prop.description); return; }
 
   try {
     // 1. Graft what you carry.
@@ -218,6 +259,8 @@ function interact(): void {
       const before = { ...state.flags };
       commit({ type: 'DROP', itemId: carried, toPropId: propId });
       showToast(prop.accepts[carried].note, 5200);
+      const sound = PLACEMENT_SOUNDS[`${propId}:${carried}`];
+      if (sound) void audio.playOnce(sound.url, sound.volume);
       flash();
       if (state.flags.floor1_cleared && !before.floor1_cleared) {
         announce('GROUND FLOOR CLEARED. SOMETHING UPSTAIRS HAS STARTED TO HUM.', true, 6000);
@@ -264,9 +307,11 @@ function interact(): void {
       return;
     }
     // 5. Travel.
-    if (prop.travel) {
-      if (!canTravel(state, prop)) { showToast(prop.travel.lockedText ?? 'It will not move.'); return; }
-      travel(prop);
+    if (routesOf(prop).length) {
+      if (isLiftProp(prop) && routeOptions(state, prop, renderer.getCarFloor()).length > 1) { openLiftMenu(prop); return; }
+      const { route, reason } = routeFor(state, prop, renderer.getCarFloor());
+      if (!route) { showToast(reason ?? 'It will not move.'); return; }
+      travel(prop, route);
       return;
     }
     // 6. Re-read what you already know.
@@ -278,8 +323,7 @@ function interact(): void {
   }
 }
 
-function travel(prop: PropDef): void {
-  const travelDef = prop.travel!;
+function travel(prop: PropDef, travelDef: PropTravel): void {
   traveling = true;
   ui.fade.classList.add('on');
   showToast(travelDef.text, 3200);
@@ -294,6 +338,63 @@ function travel(prop: PropDef): void {
     traveling = false;
   }, isLift ? 1400 : 650);
 }
+
+// ── Lift floor menu ──────────────────────────────────────────────
+
+function openLiftMenu(prop: PropDef): void {
+  liftProp = prop;
+  liftOpenedAt = performance.now();
+  const carFloor = renderer.getCarFloor();
+  const options = routeOptions(state, prop, carFloor);
+  ui.liftOptions.replaceChildren(...FLOOR_NAMES.map((name, floor) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'lift-option';
+    const option = options.find((o) => o.route.toFloor === floor);
+    let why = '';
+    if (floor === carFloor) { why = 'You are here.'; button.classList.add('here'); }
+    else if (!option) why = 'The lift does not go there from here.';
+    else if (!option.usable) why = option.reason ?? 'It will not go there.';
+    else why = floor > carFloor ? 'Up.' : 'Down.';
+    button.disabled = !option?.usable || floor === carFloor;
+    button.innerHTML = `<kbd>${floor + 1}</kbd><span class="dest">${name}</span><span class="why">${why}</span>`;
+    button.addEventListener('click', () => chooseFloor(floor));
+    return button;
+  }));
+  ui.liftMenu.hidden = false;
+  renderer.setControlsActive(false);
+  ui.prompt.classList.remove('visible');
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
+function closeLiftMenu(relock = true): void {
+  if (!liftProp) return;
+  liftProp = null;
+  ui.liftMenu.hidden = true;
+  if (!playing) return;
+  renderer.setControlsActive(true);
+  if (relock) void canvas.requestPointerLock();
+  updatePrompt();
+}
+
+function chooseFloor(floor: number): void {
+  const prop = liftProp;
+  if (!prop) return;
+  const option = routeOptions(state, prop, renderer.getCarFloor()).find((o) => o.route.toFloor === floor);
+  if (!option) return;
+  if (!option.usable) { showToast(option.reason ?? 'It will not go there.'); return; }
+  closeLiftMenu();
+  travel(prop, option.route);
+}
+
+document.addEventListener('keydown', (event) => {
+  if (!liftProp || event.repeat) return;
+  if (event.code === 'Escape' || (event.code === 'KeyE' && performance.now() - liftOpenedAt > 200)) { closeLiftMenu(); return; }
+  if (event.code.startsWith('Digit')) {
+    const floor = Number(event.code.slice(5)) - 1;
+    if (floor >= 0 && floor < FLOOR_NAMES.length) chooseFloor(floor);
+  }
+});
 
 function undo(): void {
   if (traveling || !playing) return;
@@ -312,6 +413,7 @@ function requestRestart(): void {
 }
 
 function restart(): void {
+  closeLiftMenu(false);
   state = createInitialState(room);
   renderer.setCarFloor(0);
   renderer.teleport(0, START.pos, START.yaw);
@@ -353,7 +455,7 @@ function refreshHud(): void {
   updateCarried();
   updatePrompt();
   ui.goal.hidden = !state.flags.clue_elevator;
-  ui.goal.innerHTML = `THE LIFT WANTS ${room.goalSockets.map((s) => `<span class="socket${state.props[s.propId].currentItemId === s.itemId ? ' full' : ''}">${s.label}</span>`).join('')}`;
+  ui.goal.innerHTML = `THE LIFT NEEDS ${room.goalSockets.map((s) => `<span class="socket${state.props[s.propId].currentItemId === s.itemId ? ' full' : ''}"><i></i>${s.label}</span>`).join('')}`;
 }
 
 interface Heard { id: string; label: string; volume: number; pan: number; where: string }
@@ -361,11 +463,11 @@ interface Heard { id: string; label: string; volume: number; pan: number; where:
 function audible(): Heard[] {
   const listener = renderer.getListener();
   const heard: Heard[] = [];
-  const add = (id: string, label: string, floor: number, x: number, z: number, range: number, crossFloor = 0): void => {
+  const add = (id: string, label: string, floor: number, x: number, z: number, range: number, crossFloor = 0, gain = 1): void => {
     const sameFloor = floor === listener.floor;
     if (!sameFloor && !crossFloor) return;
     const dist = Math.hypot(x - listener.x, z - listener.z);
-    const volume = sameFloor ? Math.max(0, 1 - dist / range) : crossFloor;
+    const volume = (sameFloor ? Math.max(0, 1 - dist / range) : crossFloor) * gain;
     if (volume <= 0.02) return;
     const angle = Math.atan2(x - listener.x, z - listener.z) - (listener.yaw + Math.PI);
     const pan = sameFloor ? -Math.sin(angle) : 0;
@@ -385,9 +487,11 @@ function audible(): Heard[] {
   if (p.scarecrow.currentItemId === 'ev_voice') { const s = at('lullaby'); add('lullaby', '[THE DEAD VOICE, FROM THE SCARECROW]', s.floor, s.pos[0], s.pos[2], 16); }
   if (p.carver.currentItemId === 'ev_heart') { const s = at('breath'); add('breath', '[SLOW, WET BREATHING]', s.floor, s.pos[0], s.pos[2], 12); }
   if (listener.floor === 1 && upstairsAwake && p.specter.currentItemId === 'ev_lullaby') {
+    // Her voice follows her body: it fades in and out with her appearance, and is loudest when she is close.
     const node = renderer.getSpecterPosition();
+    const presence = renderer.getSpecterPresence();
     const manifest = renderer.isSpecterManifest();
-    add('hum', manifest ? '[A WOMAN HUMMING, CLOSE]' : '[HUMMING, SOMEWHERE ON THIS FLOOR]', 1, node[0], node[2], manifest ? 18 : 30);
+    add('hum', manifest ? '[A WOMAN SINGING, CLOSE]' : '[SINGING, SOMEWHERE ON THIS FLOOR]', 1, node[0], node[2], 16, 0, presence);
   }
   return heard.sort((a, b) => b.volume - a.volume);
 }
@@ -397,18 +501,18 @@ const LOOP_SOURCES = {
   water: { synth: 'water' as const },
   fire: { synth: 'fire' as const },
   heartbeat: { url: '/sounds/heartbeat_slow_0.wav' },
-  hum: { synth: 'drone' as const },
+  hum: { url: '/sounds/ghost_singing.mp3' },
   lullaby: { synth: 'drone' as const },
   breath: { url: '/sounds/horror_breathing.wav' },
 };
-const LOOP_VOLUME: Record<string, number> = { ticking: 0.5, water: 0.35, fire: 0.5, heartbeat: 0.9, hum: 0.35, lullaby: 0.4, breath: 0.7 };
+const LOOP_VOLUME: Record<string, number> = { ticking: 0.5, water: 0.35, fire: 0.5, heartbeat: 0.9, hum: 0.7, lullaby: 0.4, breath: 0.7 };
 
 function updateSenses(): void {
   const heard = audible();
   ui.heard.replaceChildren(...heard.slice(0, 4).map((h) => {
     const li = document.createElement('li');
     li.style.opacity = String(0.45 + h.volume * 0.55);
-    li.innerHTML = `${h.label}<small>${h.where}</small>`;
+    li.innerHTML = `<span class="dir">${DIRECTION_ARROWS[h.where] ?? ''}</span>${h.label}<small>${h.where}</small>`;
     return li;
   }));
   for (const id of Object.keys(LOOP_SOURCES) as (keyof typeof LOOP_SOURCES)[]) {
@@ -416,13 +520,14 @@ function updateSenses(): void {
     audio.setLevel(id, entry ? entry.volume * LOOP_VOLUME[id] : 0, entry?.pan ?? 0);
   }
   const listener = renderer.getListener();
-  ui.location.textContent = `${FLOOR_NAMES[listener.floor]} · ${renderer.getRoomName().toUpperCase()}`;
+  ui.floorName.textContent = FLOOR_NAMES[listener.floor];
+  ui.roomName.textContent = renderer.getRoomName();
   if (selectedTool === 'tool_emf') {
     const reading = renderer.getEmfReading();
     const lit = Math.round(reading * 8);
     ui.emfBars.querySelectorAll('i').forEach((bar, index) => bar.classList.toggle('on', index < lit));
   }
-  if (renderer.getTargetPropId() === 'specter' || renderer.getTargetPropId() === null) updatePrompt();
+  if (!liftProp && (renderer.getTargetPropId() === 'specter' || renderer.getTargetPropId() === null)) updatePrompt();
 }
 
 // ── Start, mute, loop ────────────────────────────────────────────
@@ -444,7 +549,7 @@ ui.mute.addEventListener('click', async () => {
   await audio.init();
   audio.setMuted(!audio.isMuted());
   const muted = audio.isMuted();
-  ui.mute.textContent = muted ? 'SOUND: OFF' : 'SOUND: ON';
+  ui.mute.textContent = muted ? 'Sound off' : 'Sound on';
   ui.mute.setAttribute('aria-pressed', String(!muted));
 });
 

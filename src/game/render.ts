@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { checkAll, isActive, isPropVisible } from './core';
+import { checkAll, isActive, isInteractable, isLocked, isPropVisible } from './core';
 import { cloneSkinned, devicePiece, fitObject, halloweenPiece, kaykitPiece, loadFBX, loadGLTF, surfaceTexture, weather } from './assets';
 import { buildPrim, evidenceToken, type PrimParts } from './prims';
 import type { GameState, PropDef, RoomDef } from './types';
@@ -50,6 +50,9 @@ const RADIUS = 0.3;
 const REACH = 3.2;
 const HOT_LAYER = 1;
 const GLIMPSE_LIFE = 4.5;
+/** Monsters glow by their own rules; they are never given the interaction highlight. */
+const ANOMALY_IDS = new Set(['hollow', 'specter', 'carver']);
+const DENSE_MOTE_PROPS = new Set(['dining_clock', 'hall_coffin']);
 
 /** Box UVs in world units so one tiled texture and one material can be shared by every wall. */
 function tileBox(geometry: THREE.BufferGeometry, w: number, h: number, d: number, tile: number): void {
@@ -84,6 +87,15 @@ export class GameRenderer {
   private readonly carTargets: THREE.Object3D[] = [];
   private readonly targetsWithCar: THREE.Object3D[][] = [[], [], []];
   private readonly propViews = new Map<string, PropView>();
+  private readonly flies = new Map<string, THREE.Sprite[]>();
+  private glowTexture: THREE.CanvasTexture | null = null;
+  /** Post-processing for the white outline. Loaded lazily; until then nothing is outlined. */
+  private composer: { render(delta?: number): void; setSize(w: number, h: number): void; setPixelRatio(r: number): void } | null = null;
+  private outlinePass: { selectedObjects: THREE.Object3D[] } | null = null;
+  private outlined: string[] = [];
+  /** Per-prop cloned materials that breathe a warm emissive glow while the prop is usable. */
+  private readonly glowMats = new Map<string, THREE.MeshStandardMaterial[]>();
+  private readonly glowColor = new THREE.Color('#ffb070');
   private readonly lightSlots: LightSlot[] = [];
   private readonly revealDecor: { object: THREE.Object3D; tool: string }[] = [];
   private readonly mixers: { mixer: THREE.AnimationMixer; floor: number }[] = [];
@@ -110,6 +122,7 @@ export class GameRenderer {
   private bob = 0;
   private controlsActive = false;
   private targetPropId: string | null = null;
+  private outlineRefresh = 0;
   private selectedTool: string | null = null;
   private frame = 0;
   private pixelRatio = Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
@@ -163,6 +176,7 @@ export class GameRenderer {
     }
 
     this.bindInput();
+    void this.loadOutline().catch((error) => console.warn('Outline unavailable', error));
     this.resize();
     window.addEventListener('resize', this.resize);
   }
@@ -379,6 +393,22 @@ export class GameRenderer {
       const sd = cos > 0.5 ? d : w;
       this.colliders[floor].push({ minX: group.position.x - sw / 2, maxX: group.position.x + sw / 2, minZ: group.position.z - sd / 2, maxZ: group.position.z + sd / 2 });
     }
+    if (!ANOMALY_IDS.has(def.id)) {
+      // A small swarm of motes hugging the prop itself, not the room around it.
+      const flies: THREE.Sprite[] = [];
+      const moteCount = DENSE_MOTE_PROPS.has(def.id) ? 18 : 6;
+      for (let i = 0; i < moteCount; i += 1) {
+        const fly = this.makeFirefly();
+        fly.userData.phase = i * 1.37 + def.id.length * 0.53;
+        fly.userData.speed = 0.35 + (i % 3) * 0.12;
+        fly.userData.rx = Math.min(w / 2 + 0.1, 0.8);
+        fly.userData.rz = Math.min(d / 2 + 0.1, 0.8);
+        fly.userData.ry = Math.min(h / 2, 0.7);
+        group.add(fly);
+        flies.push(fly);
+      }
+      this.flies.set(def.id, flies);
+    }
     this.propViews.set(def.id, { def, placement, group, hitbox, parts, anchor, anchorItem: null, floor: onCar ? -1 : floor });
   }
 
@@ -400,6 +430,162 @@ export class GameRenderer {
       const [sw, sd] = Math.abs(Math.cos(group.rotation.y)) > 0.5 ? item.solid : [item.solid[1], item.solid[0]];
       this.colliders[item.floor].push({ minX: item.pos[0] - sw / 2, maxX: item.pos[0] + sw / 2, minZ: item.pos[2] - sd / 2, maxZ: item.pos[2] + sd / 2 });
     }
+  }
+
+  private moteTexture(): THREE.CanvasTexture {
+    if (!this.glowTexture) {
+      const canvas = document.createElement('canvas');
+      canvas.width = 128;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const gradient = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+        gradient.addColorStop(0, 'rgba(255,226,176,0.9)');
+        gradient.addColorStop(0.4, 'rgba(255,206,140,0.28)');
+        gradient.addColorStop(1, 'rgba(255,190,120,0)');
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, 128, 128);
+      }
+      this.glowTexture = new THREE.CanvasTexture(canvas);
+    }
+    return this.glowTexture;
+  }
+
+  /** A tiny additive speck of light. Each one is its own sprite so it can fade on its own. */
+  private makeFirefly(): THREE.Sprite {
+    const material = new THREE.SpriteMaterial({ map: this.moteTexture(), color: '#ffe6a0', transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.setScalar(0.11);
+    sprite.renderOrder = 3;
+    sprite.visible = false;
+    return sprite;
+  }
+
+  /** Is this prop on the floor you are standing on, and how far away is it? */
+  private propDistance(view: PropView): number {
+    const onThisFloor = view.floor === -1 ? this.carFloor === this.floor : view.floor === this.floor;
+    if (!onThisFloor) return Infinity;
+    view.hitbox.getWorldPosition(this.tmp);
+    return Math.hypot(this.tmp.x - this.camera.position.x, this.tmp.z - this.camera.position.z);
+  }
+
+  /**
+   * Interactables carry a few motes that drift close around them and fade in as you approach.
+   * Within arm's length, the prop also gets a thin white outline.
+   */
+  private updateGlows(time: number): void {
+    if (!this.state) return;
+    const thermal = this.selectedTool === 'tool_thermal';
+    const outline: string[] = [];
+    let index = 0;
+    for (const [id, flies] of this.flies) {
+      index += 1;
+      const view = this.propViews.get(id)!;
+      const on = !thermal && isInteractable(this.state, view.def, this.carFloor);
+      const dist = on ? this.propDistance(view) : Infinity;
+      const fade = THREE.MathUtils.clamp((7 - dist) / 4, 0, 1); // full at 3 m, gone by 7 m
+      if (on && dist < 3) outline.push(id);
+      const mats = this.glowMats.get(id);
+      if (mats) {
+        // A slow warm breath on the prop itself, so it reads as "touchable" from across the room.
+        const glow = THREE.MathUtils.clamp((9 - dist) / 5, 0, 1) * (0.16 + 0.08 * Math.sin(time * 2.2 + index));
+        for (const m of mats) m.emissiveIntensity = glow;
+      }
+      else if (this.targetPropId === id && !thermal && this.propDistance(view) < 8 && isPropVisible(this.state, view.def) && !isLocked(this.state, id)) outline.push(id);
+      const base = view.hitbox.position;
+      for (const fly of flies) {
+        fly.visible = fade > 0;
+        if (!fly.visible) continue;
+        const t = time * (fly.userData.speed as number) + (fly.userData.phase as number);
+        fly.position.set(
+          base.x + Math.cos(t) * (fly.userData.rx as number),
+          base.y + Math.sin(t * 1.9 + index) * (fly.userData.ry as number),
+          base.z + Math.sin(t * 1.3) * (fly.userData.rz as number),
+        );
+        (fly.material as THREE.SpriteMaterial).opacity = fade * (0.55 + 0.45 * Math.sin(t * 3.1 + index));
+      }
+    }
+    if (time - this.outlineRefresh > 0.5) {
+      // Models load lazily, so re-collect meshes now and then.
+      this.outlineRefresh = time;
+      if (outline.length) this.outlined = [];
+      this.collectGlowMaterials();
+    }
+    this.setOutlined(outline);
+  }
+
+  /** Clone each prop's lit materials once so the glow never leaks onto shared furniture materials. */
+  private collectGlowMaterials(): void {
+    for (const id of this.flies.keys()) {
+      const view = this.propViews.get(id);
+      if (!view || id.startsWith('elevator') || view.group.userData.glowMeshes === this.countMeshes(view.group)) continue;
+      const mats: THREE.MeshStandardMaterial[] = [];
+      view.group.traverse((child) => {
+        if (!(child instanceof THREE.Mesh) || child === view.hitbox || child.userData.wall) return;
+        const list = Array.isArray(child.material) ? child.material : [child.material];
+        const next = list.map((m: THREE.Material) => {
+          if (!(m instanceof THREE.MeshStandardMaterial)) return m;
+          if (m.userData.glowOwner === id) { mats.push(m); return m; }
+          if (m.emissive.getHex() !== 0) return m; // already glowing (flames, bulbs): leave alone
+          const copy = m.clone();
+          copy.userData.glowOwner = id;
+          copy.emissive.copy(this.glowColor);
+          copy.emissiveIntensity = 0;
+          mats.push(copy);
+          return copy;
+        });
+        child.material = Array.isArray(child.material) ? next : next[0];
+      });
+      view.group.userData.glowMeshes = this.countMeshes(view.group);
+      this.glowMats.set(id, mats);
+    }
+  }
+
+  private countMeshes(object: THREE.Object3D): number {
+    let n = 0;
+    object.traverse((child) => { if (child instanceof THREE.Mesh) n += 1; });
+    return n;
+  }
+
+  private setOutlined(ids: string[]): void {
+    if (!this.outlinePass) return;
+    if (ids.length === this.outlined.length && ids.every((id, i) => id === this.outlined[i])) return;
+    this.outlined = ids;
+    const meshes: THREE.Object3D[] = [];
+    for (const id of ids) {
+      const view = this.propViews.get(id);
+      view?.group.traverse((child) => {
+        if (child instanceof THREE.Mesh && child !== view.hitbox && !child.userData.wall) meshes.push(child);
+      });
+    }
+    this.outlinePass.selectedObjects = meshes;
+  }
+
+  private async loadOutline(): Promise<void> {
+    const [{ EffectComposer }, { RenderPass }, { OutlinePass }, { OutputPass }] = await Promise.all([
+      import('three/addons/postprocessing/EffectComposer.js'),
+      import('three/addons/postprocessing/RenderPass.js'),
+      import('three/addons/postprocessing/OutlinePass.js'),
+      import('three/addons/postprocessing/OutputPass.js'),
+    ]);
+    const width = this.canvas.clientWidth || window.innerWidth;
+    const height = this.canvas.clientHeight || window.innerHeight;
+    const composer = new EffectComposer(this.renderer);
+    composer.setPixelRatio(this.pixelRatio);
+    composer.setSize(width, height);
+    composer.addPass(new RenderPass(this.scene, this.camera));
+    const pass = new OutlinePass(new THREE.Vector2(width, height), this.scene, this.camera);
+    pass.visibleEdgeColor.set('#ffffff');
+    pass.hiddenEdgeColor.set('#000000');
+    pass.edgeStrength = 3.4;
+    pass.edgeGlow = 0.8;
+    pass.edgeThickness = 1.6;
+    pass.pulsePeriod = 0;
+    composer.addPass(pass);
+    composer.addPass(new OutputPass());
+    this.composer = composer;
+    this.outlinePass = pass;
+    this.outlined = [];
   }
 
   private async loadModel(ref: ModelRef): Promise<THREE.Object3D | null> {
@@ -713,6 +899,11 @@ export class GameRenderer {
     return Math.min(1, reading + Math.random() * 0.04);
   }
 
+  /** 0 when she is gone, 1 when fully visible. Drives how loudly her voice is heard. */
+  getSpecterPresence(): number {
+    return this.floor === 1 ? this.specterOpacity : 0;
+  }
+
   isSpecterManifest(): boolean {
     return this.specterOpacity > 0.55;
   }
@@ -819,6 +1010,7 @@ export class GameRenderer {
 
   private updatePropAnimation(time: number, delta: number): void {
     if (!this.state) return;
+    this.updateGlows(time);
     if (this.floor === 0) {
       const clockView = this.propViews.get('dining_clock');
       if (clockView?.parts?.pendulum) {
@@ -1008,6 +1200,7 @@ export class GameRenderer {
     if (next !== this.pixelRatio) {
       this.pixelRatio = next;
       this.renderer.setPixelRatio(next);
+      this.composer?.setPixelRatio(next);
       this.resize();
     }
   }
@@ -1044,6 +1237,9 @@ export class GameRenderer {
       this.scene.background = background;
       this.scene.overrideMaterial = null;
       this.camera.layers.set(0);
+    } else if (this.composer && this.outlined.length) {
+      // Only pay for the outline passes while something is actually outlined.
+      this.composer.render(delta);
     } else {
       this.renderer.render(this.scene, this.camera);
     }
@@ -1055,5 +1251,6 @@ export class GameRenderer {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
+    this.composer?.setSize(width, height);
   };
 }
